@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"encoding/json"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -8,11 +10,15 @@ import (
 
 type JavaScriptResolver struct {
 	pnpmPathRe *regexp.Regexp
+	npmPathRe  *regexp.Regexp
+	yarnPathRe *regexp.Regexp
 }
 
 func NewJavaScriptResolver() *JavaScriptResolver {
 	return &JavaScriptResolver{
 		pnpmPathRe: regexp.MustCompile(`node_modules/\.pnpm/([^/]+)/node_modules/(@[^/]+/[^/]+|[^/]+)(?:/|$)`),
+		npmPathRe:  regexp.MustCompile(`node_modules/(@[^/]+/[^/]+|[^/]+)/package\.json$`),
+		yarnPathRe: regexp.MustCompile(`(?:^|/)(?:\.trace-yarn-cache|\.yarn/berry/cache)/((?:@[^/]+/)?[^/]+)-npm-([0-9][^-/]*)-[^/]+\.zip(?:-[^/]+\.tmp)?$`),
 	}
 }
 
@@ -31,7 +37,7 @@ func (r *JavaScriptResolver) Resolve(files []FileInfo) (packages []PackageInfo, 
 			continue
 		}
 
-		name, version, ok := r.extractPnpmPackage(np)
+		name, version, ok := r.extractPackage(np)
 		if !ok {
 			remainingFiles = append(remainingFiles, f)
 			continue
@@ -109,7 +115,20 @@ func (f *jsPackageFilter) Matches(p string) bool {
 }
 
 func (r *JavaScriptResolver) isJavaScriptPath(p string) bool {
-	return strings.Contains(p, "node_modules") || strings.Contains(p, ".pnpm")
+	return strings.Contains(p, "node_modules") ||
+		strings.Contains(p, ".pnpm") ||
+		strings.Contains(p, ".trace-yarn-cache") ||
+		strings.Contains(p, ".yarn/berry/cache")
+}
+
+func (r *JavaScriptResolver) extractPackage(p string) (string, string, bool) {
+	if name, version, ok := r.extractPnpmPackage(p); ok {
+		return name, version, true
+	}
+	if name, version, ok := r.extractYarnPackage(p); ok {
+		return name, version, true
+	}
+	return r.extractNpmPackage(p)
 }
 
 func (r *JavaScriptResolver) extractPnpmPackage(p string) (string, string, bool) {
@@ -122,6 +141,52 @@ func (r *JavaScriptResolver) extractPnpmPackage(p string) (string, string, bool)
 	name := matches[2]
 	version := extractPnpmVersion(segment)
 	if version == "" {
+		return "", "", false
+	}
+
+	return name, version, true
+}
+
+func (r *JavaScriptResolver) extractNpmPackage(p string) (string, string, bool) {
+	matches := r.npmPathRe.FindStringSubmatch(p)
+	if len(matches) != 2 {
+		return "", "", false
+	}
+
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "", "", false
+	}
+
+	var pkg struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "", "", false
+	}
+
+	name := strings.TrimSpace(pkg.Name)
+	version := strings.TrimSpace(pkg.Version)
+	if name == "" {
+		name = matches[1]
+	}
+	if name == "" || version == "" {
+		return "", "", false
+	}
+
+	return name, version, true
+}
+
+func (r *JavaScriptResolver) extractYarnPackage(p string) (string, string, bool) {
+	matches := r.yarnPathRe.FindStringSubmatch(p)
+	if len(matches) != 3 {
+		return "", "", false
+	}
+
+	name := matches[1]
+	version := strings.TrimSpace(matches[2])
+	if name == "" || version == "" {
 		return "", "", false
 	}
 

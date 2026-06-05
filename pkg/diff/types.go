@@ -5,4 +5,6 @@ type EnrichmentSummary struct {
 	TotalBase int
 	Added     int
 	Updated   int
+	AddedFiles         int
+	AddedRelationships int
 }

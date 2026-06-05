@@ -73,6 +73,30 @@ func CompareSBOM(base, enriched *sbom.Document) EnrichmentSummary {
 		}
 	}
 
+	// Count newly added files
+	baseFiles := 0
+	enrichedFiles := 0
+	for _, node := range base.NodeList.Nodes {
+		if node != nil && node.Type == sbom.Node_FILE {
+			baseFiles++
+		}
+	}
+	for _, node := range enriched.NodeList.Nodes {
+		if node != nil && node.Type == sbom.Node_FILE {
+			enrichedFiles++
+		}
+	}
+	if enrichedFiles > baseFiles {
+		summary.AddedFiles = enrichedFiles - baseFiles
+	}
+
+	// Count newly added relationships (edges)
+	baseEdges := len(base.NodeList.Edges)
+	enrichedEdges := len(enriched.NodeList.Edges)
+	if enrichedEdges > baseEdges {
+		summary.AddedRelationships = enrichedEdges - baseEdges
+	}
+
 	return summary
 }
 
@@ -106,4 +130,6 @@ func PrintEnrichmentSummary(summary EnrichmentSummary) {
 	fmt.Fprintf(os.Stderr, "  • Base Packages: %d\n", summary.TotalBase)
 	fmt.Fprintf(os.Stderr, "  •  Added by Attestation: %d\n", summary.Added)
 	fmt.Fprintf(os.Stderr, "  •  Enriched Packages (Hashes, URLs, etc): %d\n\n", summary.Updated)
+	fmt.Fprintf(os.Stderr, "  •  Added Files: %d\n", summary.AddedFiles)
+	fmt.Fprintf(os.Stderr, "  •  Added Relationships: %d\n\n", summary.AddedRelationships)
 }
