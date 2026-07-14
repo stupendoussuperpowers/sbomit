@@ -29,6 +29,7 @@ type Options struct {
 	OutputFormat     string
 	OutputPath       string
 	Catalog          string
+	BaseSBOMPath     string
 	ProjectDir       string
 	ShowEnrichment   bool
 }
@@ -42,6 +43,7 @@ func DefaultOptions() *Options {
 		AttestationTypes: []string{"material", "command-run", "product", "network-trace"},
 		OutputFormat:     "spdx23",
 		Catalog:          "",
+		BaseSBOMPath:     "",
 		ProjectDir:       "",
 	}
 }
@@ -99,26 +101,35 @@ func (g *Generator) GenerateFromAttestations(attestations []attestation.TypedAtt
 	var baseDoc *sbom.Document
 	var err error
 
-	projectDir := strings.TrimSpace(g.opts.ProjectDir)
-	if projectDir == "" {
-		projectDir, err = os.Getwd()
+	if g.opts.BaseSBOMPath != "" {
+		baseDoc, err = g.readBaseSBOM(g.opts.BaseSBOMPath)
 		if err != nil {
-			return fmt.Errorf("failed to determine project directory: %w", err)
+			return err
 		}
 	}
 
-	switch g.opts.Catalog {
-	case "syft":
-		baseDoc, err = g.runSyft(projectDir)
-		if err != nil {
-			return fmt.Errorf("failed to run syft: %w", err)
+	if baseDoc == nil {
+		projectDir := strings.TrimSpace(g.opts.ProjectDir)
+		if projectDir == "" {
+			projectDir, err = os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to determine project directory: %w", err)
+			}
 		}
-	case "trivy":
-		baseDoc, err = g.runTrivy(projectDir)
-		if err != nil {
-			return fmt.Errorf("failed to run trivy: %w", err)
+
+		switch g.opts.Catalog {
+		case "syft":
+			baseDoc, err = g.runSyft(projectDir)
+			if err != nil {
+				return fmt.Errorf("failed to run syft: %w", err)
+			}
+		case "trivy":
+			baseDoc, err = g.runTrivy(projectDir)
+			if err != nil {
+				return fmt.Errorf("failed to run trivy: %w", err)
+			}
+		default:
 		}
-	default:
 	}
 
 	attFiles := attestation.ExtractFilesFromAttestations(attestations, g.opts.AttestationTypes)
@@ -153,6 +164,15 @@ func (g *Generator) GenerateFromAttestations(attestations []attestation.TypedAtt
 	}
 
 	return g.writeOutput(attDoc)
+}
+
+func (g *Generator) readBaseSBOM(path string) (*sbom.Document, error) {
+	r := reader.New()
+	doc, err := r.ParseFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse base SBOM %s: %w", path, err)
+	}
+	return doc, nil
 }
 
 // mergeNetworkPackages merges network-resolved packages into the file-resolved result.

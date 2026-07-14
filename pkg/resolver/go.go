@@ -14,7 +14,7 @@ type GoResolver struct {
 func NewGoResolver() *GoResolver {
 	return &GoResolver{
 		moduleDirRe:   regexp.MustCompile(`pkg/mod/([^@]+)@([^/]+)/`),
-		moduleCacheRe: regexp.MustCompile(`pkg/mod/cache/download/(.+)/@v/([^/]+)\.(mod|zip|info)`),
+		moduleCacheRe: regexp.MustCompile(`pkg/mod/cache/download/(.+)/@v/([^/]+)\.(mod|zip|ziphash|info)`),
 	}
 }
 
@@ -48,7 +48,7 @@ func (r *GoResolver) Resolve(files []FileInfo) (packages []PackageInfo, remainin
 			continue
 		}
 
-		purl := "pkg:golang/" + module + "@" + version
+		purl := "pkg:golang/" + module + "@" + encodePURLVersion(version)
 		pkg := PackageInfo{
 			Name:      module,
 			Version:   version,
@@ -121,6 +121,9 @@ func (r *GoResolver) extractModuleVersion(p string) (module string, version stri
 	if matches := r.moduleCacheRe.FindStringSubmatch(p); len(matches) == 4 {
 		return matches[1], matches[2], true, true
 	}
+	if strings.Contains(p, "/pkg/mod/cache/download/") {
+		return "", "", false, false
+	}
 	if matches := r.moduleDirRe.FindStringSubmatch(p); len(matches) == 3 {
 		return matches[1], matches[2], false, true
 	}
@@ -178,4 +181,14 @@ func encodeGoModulePath(module string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+func encodePURLVersion(version string) string {
+	replacer := strings.NewReplacer(
+		"%", "%25",
+		"+", "%2B",
+		"?", "%3F",
+		"#", "%23",
+	)
+	return replacer.Replace(version)
 }

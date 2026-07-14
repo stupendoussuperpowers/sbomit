@@ -17,6 +17,7 @@ var (
 	authors          []string
 	attestationTypes []string
 	catalog          string
+	baseSBOMPath     string
 	projectDir       string
 	showEnrichment   bool
 )
@@ -59,6 +60,7 @@ func init() {
 	generateCmd.Flags().StringSliceVar(&authors, "author", []string{}, "Document authors (can be specified multiple times)")
 	generateCmd.Flags().StringSliceVar(&attestationTypes, "types", []string{"material", "command-run", "product", "network-trace"}, "Attestation types to parse (comma-separated).")
 	generateCmd.Flags().StringVarP(&catalog, "catalog", "c", "", "Cataloger to run before processing attestations (supported: syft, trivy)")
+	generateCmd.Flags().StringVar(&baseSBOMPath, "base-sbom", "", "Existing SBOM file to enrich instead of running a cataloger")
 	generateCmd.Flags().StringVar(&projectDir, "project-dir", "", "Project directory to scan with the cataloger (default: current directory)")
 	generateCmd.Flags().BoolVar(&showEnrichment, "show-enrichment", false, "Output a human-readable summary displaying the attestation-based enrichment")
 }
@@ -82,6 +84,14 @@ func runGenerate(attestationFile string) error {
 	if !validCatalogs[strings.ToLower(catalog)] {
 		return fmt.Errorf("invalid catalog: %s (supported: syft, trivy)", catalog)
 	}
+	if catalog != "" && baseSBOMPath != "" {
+		return fmt.Errorf("--base-sbom cannot be used with --catalog")
+	}
+	if baseSBOMPath != "" {
+		if _, err := os.Stat(baseSBOMPath); os.IsNotExist(err) {
+			return fmt.Errorf("base SBOM file not found: %s", baseSBOMPath)
+		}
+	}
 
 	opts := &generator.Options{
 		DocumentName:     documentName,
@@ -91,6 +101,7 @@ func runGenerate(attestationFile string) error {
 		OutputFormat:     outputFormat,
 		OutputPath:       outputPath,
 		Catalog:          catalog,
+		BaseSBOMPath:     baseSBOMPath,
 		ProjectDir:       projectDir,
 		ShowEnrichment:   showEnrichment,
 	}
