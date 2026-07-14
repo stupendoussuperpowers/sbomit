@@ -23,7 +23,7 @@ func (r *GoResolver) Name() string {
 }
 
 func (r *GoResolver) Resolve(files []FileInfo) (packages []PackageInfo, remainingFiles []FileInfo) {
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 
 	for _, f := range files {
 		np := path.Clean(f.Path)
@@ -33,7 +33,7 @@ func (r *GoResolver) Resolve(files []FileInfo) (packages []PackageInfo, remainin
 			continue
 		}
 
-		module, version, ok := r.extractModuleVersion(np)
+		module, version, isCache, ok := r.extractModuleVersion(np)
 		if !ok {
 			remainingFiles = append(remainingFiles, f)
 			continue
@@ -41,10 +41,12 @@ func (r *GoResolver) Resolve(files []FileInfo) (packages []PackageInfo, remainin
 
 		module = DecodeGoModulePath(module)
 		key := module + "@" + version
-		if _, ok := seen[key]; ok {
+		if idx, ok := seen[key]; ok {
+			if isCache {
+				packages[idx].Evidence = append(packages[idx].Evidence, f)
+			}
 			continue
 		}
-		seen[key] = struct{}{}
 
 		purl := "pkg:golang/" + module + "@" + version
 		pkg := PackageInfo{
@@ -52,10 +54,15 @@ func (r *GoResolver) Resolve(files []FileInfo) (packages []PackageInfo, remainin
 			Version:   version,
 			Ecosystem: "golang",
 			PURL:      purl,
-			Hashes:    f.Hashes,
 			FoundBy:   "attestation:go",
 		}
+		if isCache {
+			pkg.Evidence = append(pkg.Evidence, f)
+		} else {
+			pkg.Hashes = f.Hashes
+		}
 		packages = append(packages, pkg)
+		seen[key] = len(packages) - 1
 	}
 
 	return packages, remainingFiles
@@ -110,14 +117,14 @@ func (r *GoResolver) isGoPath(p string) bool {
 	return strings.Contains(p, "/pkg/mod/")
 }
 
-func (r *GoResolver) extractModuleVersion(p string) (string, string, bool) {
-	if matches := r.moduleDirRe.FindStringSubmatch(p); len(matches) == 3 {
-		return matches[1], matches[2], true
-	}
+func (r *GoResolver) extractModuleVersion(p string) (module string, version string, isCache bool, ok bool) {
 	if matches := r.moduleCacheRe.FindStringSubmatch(p); len(matches) == 4 {
-		return matches[1], matches[2], true
+		return matches[1], matches[2], true, true
 	}
-	return "", "", false
+	if matches := r.moduleDirRe.FindStringSubmatch(p); len(matches) == 3 {
+		return matches[1], matches[2], false, true
+	}
+	return "", "", false, false
 }
 
 func goModulePathVariants(module string) []string {

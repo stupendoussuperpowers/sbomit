@@ -337,8 +337,8 @@ func (g *Generator) mergePreferAttestation(baseDoc *sbom.Document, attDoc *sbom.
 		}
 
 		if targetNode != nil {
-			// Merge: prefer attestation values over syft
-			targetNode.Update(attNode)
+			// Merge package evidence without discarding scanner-provided metadata.
+			mergePreferAttestationNode(targetNode, attNode)
 		} else {
 
 			baseDoc.NodeList.AddNode(attNode)
@@ -354,6 +354,47 @@ func (g *Generator) mergePreferAttestation(baseDoc *sbom.Document, attDoc *sbom.
 	mergeList.Edges = attDoc.NodeList.Edges
 	mergeList.RootElements = attDoc.NodeList.RootElements
 	baseDoc.NodeList.Add(mergeList)
+}
+
+func mergePreferAttestationNode(targetNode, attNode *sbom.Node) {
+	existingExternalRefs := append([]*sbom.ExternalReference{}, targetNode.ExternalReferences...)
+	existingIdentifiers := make(map[int32]string, len(targetNode.Identifiers))
+	for k, v := range targetNode.Identifiers {
+		existingIdentifiers[k] = v
+	}
+
+	targetNode.Update(attNode)
+
+	targetNode.ExternalReferences = mergeExternalReferences(existingExternalRefs, attNode.ExternalReferences)
+	if len(existingIdentifiers) > 0 {
+		if targetNode.Identifiers == nil {
+			targetNode.Identifiers = map[int32]string{}
+		}
+		for k, v := range existingIdentifiers {
+			if _, ok := targetNode.Identifiers[k]; !ok {
+				targetNode.Identifiers[k] = v
+			}
+		}
+	}
+}
+
+func mergeExternalReferences(baseRefs, attRefs []*sbom.ExternalReference) []*sbom.ExternalReference {
+	seen := make(map[string]struct{}, len(baseRefs)+len(attRefs))
+	merged := make([]*sbom.ExternalReference, 0, len(baseRefs)+len(attRefs))
+
+	for _, ref := range append(baseRefs, attRefs...) {
+		if ref == nil {
+			continue
+		}
+		key := fmt.Sprintf("%d|%s|%s|%s", ref.Type, ref.Url, ref.Comment, ref.Authority)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, ref)
+	}
+
+	return merged
 }
 
 func (g *Generator) runTrivy(projectDir string) (*sbom.Document, error) {
@@ -430,6 +471,25 @@ func (g *Generator) createPackageNode(pkg resolver.PackageInfo) *sbom.Node {
 		if hashAlgo != sbom.HashAlgorithm_UNKNOWN {
 			node.Hashes[int32(hashAlgo)] = hash
 		}
+	}
+
+	for _, evidence := range pkg.Evidence {
+		if evidence.Path == "" {
+			continue
+		}
+		ref := &sbom.ExternalReference{
+			Type:    sbom.ExternalReference_EVIDENCE,
+			Url:     fileEvidenceURL(evidence.Path),
+			Comment: "Observed by SBOMit during build execution",
+			Hashes:  make(map[int32]string),
+		}
+		for algo, hash := range evidence.Hashes {
+			hashAlgo := mapHashAlgorithm(algo)
+			if hashAlgo != sbom.HashAlgorithm_UNKNOWN {
+				ref.Hashes[int32(hashAlgo)] = hash
+			}
+		}
+		node.ExternalReferences = append(node.ExternalReferences, ref)
 	}
 
 	return node
@@ -526,6 +586,16 @@ func sanitizeID(s string) string {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
 	return result
+}
+
+func fileEvidenceURL(path string) string {
+	if strings.HasPrefix(path, "file://") {
+		return path
+	}
+	if strings.HasPrefix(path, "/") {
+		return "file://" + path
+	}
+	return "file://" + path
 }
 
 func generateUUID() string {
